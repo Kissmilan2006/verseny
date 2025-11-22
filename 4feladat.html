@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitfaragó – 4. feladat (BASICUPGRADE)</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 1rem;
+            background: #f5f5f5;
+        }
+        h1 {
+            font-size: 1.4rem;
+        }
+        button {
+            margin: 0.25rem 0.25rem 0.25rem 0;
+            padding: 0.4rem 0.8rem;
+            cursor: pointer;
+        }
+        pre {
+            background: #111;
+            color: #eee;
+            padding: 0.5rem;
+            overflow-x: auto;
+            font-size: 0.8rem;
+        }
+        .panel {
+            background: white;
+            padding: 0.75rem;
+            margin-top: 0.75rem;
+            border-radius: 6px;
+            box-shadow: 0 0 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+<h1>4. feladat – UPGRADE teszt (BASICUPGRADE)</h1>
+
+<button onclick="loadTask4()">4. feladat lekérése</button>
+<button onclick="solveTask4()">Megoldás kiszámítása (ellenőrzés)</button>
+<button onclick="submitTask4()">Megoldás beküldése a szerverre</button>
+
+<div class="panel">
+    <strong>Log:</strong>
+    <pre id="log"></pre>
+</div>
+
+<div class="panel">
+    <strong>Eredeti feladat (original_data):</strong>
+    <pre id="taskdata"></pre>
+</div>
+
+<div class="panel">
+    <strong>Számolt válasz (answer_data):</strong>
+    <pre id="answerdata"></pre>
+</div>
+
+<div class="panel">
+    <strong>Szerver válasza a beküldésre:</strong>
+    <pre id="submitresult"></pre>
+</div>
+
+<script>
+    const TEAMCODE = "a844b7d39462bf1f46d6";
+
+    // Alap értékek (feladat leírás)
+    const BASE_MOVE_SPEED   = 10;
+    const BASE_CAPACITY     = 25;
+    const BASE_MINING_SPEED = 15;
+
+    const MOVE_UPGRADE_COST   = 70;
+    const MOVE_UPGRADE_STEP   = 4;
+
+    const CAP_UPGRADE_COST    = 100;
+    const CAP_UPGRADE_STEP    = 15;
+
+    const MINE_UPGRADE_COST   = 35;
+    const MINE_UPGRADE_STEP   = 8;
+
+    const MAX_UPGRADES_PER_ATTR = 5;
+
+    let originalData4 = null;
+    let originalHash4 = null;
+    let computedAnswers4 = null;
+
+    function log(msg) {
+        const el = document.getElementById("log");
+        el.textContent += msg + "\n";
+    }
+
+    // ---- Távolságmátrix (2. feladat logika) ----
+    function distanceMatrix(positions) {
+        const n = positions.length;
+        const matrix = [];
+
+        for (let i = 0; i < n; i++) {
+            const row = [];
+            for (let j = 0; j < n; j++) {
+                if (i === j) {
+                    row.push(0);
+                } else {
+                    const dx = positions[i].x - positions[j].x;
+                    const dy = positions[i].y - positions[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    row.push(Math.ceil(dist)); // felfelé kerekítés!
+                }
+            }
+            matrix.push(row);
+        }
+        return matrix;
+    }
+
+    function travelRounds(distance, moveSpeed) {
+        return Math.ceil(distance / moveSpeed);
+    }
+
+    // 1 aszteroida teljes kibányászásához szükséges "utak" (itt egyszerűsítünk: 1 kör / út)
+    // de itt csak az a cél, hogy elég érc legyen az upgrade-ekhez.
+    // Minden MINE parancs 1 kör lesz, amely max mining_speed érceket vesz fel, max capacity-ig.
+    function solveBasicUpgradeQuestion(params) {
+        const positions = params.positions;
+        const dm = distanceMatrix(positions);
+
+        const baseIndex = positions.findIndex(p => p.type === "Base");
+        if (baseIndex === -1) {
+            throw new Error("Nincs Base a positions között!");
+        }
+
+        const asteroids = positions
+            .map((p, idx) => ({ ...p, idx }))
+            .filter(p => p.type === "Asteroid");
+
+        if (asteroids.length !== 1) {
+            throw new Error("Ez a megoldás most az 1 aszteroidás pályára van írva.");
+        }
+
+        const ast = asteroids[0];
+        const distance = dm[baseIndex][ast.idx];
+
+        // Szükséges össz-érc az összes fejlesztéshez
+        const totalNeededOre =
+            MAX_UPGRADES_PER_ATTR * MOVE_UPGRADE_COST +
+            MAX_UPGRADES_PER_ATTR * CAP_UPGRADE_COST +
+            MAX_UPGRADES_PER_ATTR * MINE_UPGRADE_COST;
+
+        // Szimulációs állapot
+        let moveSpeed   = BASE_MOVE_SPEED;
+        let capacity    = BASE_CAPACITY;
+        let miningSpeed = BASE_MINING_SPEED;
+
+        let asteroidRemaining = ast.quantity;
+        let warehouse = 0;
+        let cargo = 0;
+
+        let totalRounds = 0;
+        let totalMined  = 0;
+
+        const shipCommands = [];
+
+        // A hajó indulása
+        shipCommands.push({ command: "STARTFROM", position: baseIndex });
+
+        // Először addig bányászunk, amíg a raktárban >= totalNeededOre nem lesz
+        // (minden út: Base -> Asteroid -> MINE 1 kör -> vissza Base)
+        while (warehouse < totalNeededOre) {
+            // Base -> Asteroid
+            shipCommands.push({ command: "MOVE", position: ast.idx });
+            const goRounds = travelRounds(distance, moveSpeed);
+            totalRounds += goRounds;
+
+            // MINE 1 kör
+            shipCommands.push({ command: "MINE", rounds: 1 });
+            if (asteroidRemaining > 0 && cargo < capacity) {
+                const canMine = Math.min(miningSpeed, asteroidRemaining, capacity - cargo);
+                asteroidRemaining -= canMine;
+                cargo += canMine;
+                totalMined += canMine;
+            }
+            totalRounds += 1;
+
+            // Asteroid -> Base
+            shipCommands.push({ command: "MOVE", position: baseIndex });
+            const backRounds = travelRounds(distance, moveSpeed);
+            totalRounds += backRounds;
+
+            // Lerakás a raktárba
+            warehouse += cargo;
+            cargo = 0;
+
+            if (asteroidRemaining <= 0) {
+                break; // elvileg itt nem fog elfogyni, mert 3000 >> 1025
+            }
+        }
+
+        // Ellenőrzés: legyen elég érce upgrade-ekre
+        if (warehouse < totalNeededOre) {
+            log("Figyelem: nem sikerült elég érceket bányászni az összes upgrade-re!");
+        }
+
+        // Most a bázison vagyunk, jöhetnek az UPGRADE-ek.
+        // Minden UPGRADE 1 kör, és le kell vonni a raktárból a költséget.
+
+        // 5× move_speed fejlesztés
+        for (let i = 0; i < MAX_UPGRADES_PER_ATTR; i++) {
+            shipCommands.push({ command: "UPGRADE", attribute: "move_speed" });
+            totalRounds += 1;
+            warehouse -= MOVE_UPGRADE_COST;
+            moveSpeed += MOVE_UPGRADE_STEP;
+        }
+
+        // 5× capacity fejlesztés
+        for (let i = 0; i < MAX_UPGRADES_PER_ATTR; i++) {
+            shipCommands.push({ command: "UPGRADE", attribute: "capacity" });
+            totalRounds += 1;
+            warehouse -= CAP_UPGRADE_COST;
+            capacity += CAP_UPGRADE_STEP;
+        }
+
+        // 5× mining_speed fejlesztés
+        for (let i = 0; i < MAX_UPGRADES_PER_ATTR; i++) {
+            shipCommands.push({ command: "UPGRADE", attribute: "mining_speed" });
+            totalRounds += 1;
+            warehouse -= MINE_UPGRADE_COST;
+            miningSpeed += MINE_UPGRADE_STEP;
+        }
+
+        const stockQuantity = warehouse;
+
+        log(`Összesen bányászott érc (totalMined): ${totalMined}`);
+        log(`Raktárban maradó érc (stockQuantity): ${stockQuantity}`);
+        log(`Összes kör (totalRounds): ${totalRounds}`);
+        log(`Végső move_speed: ${moveSpeed}, capacity: ${capacity}, mining_speed: ${miningSpeed}`);
+
+        return {
+            commands: [shipCommands],
+            totalRounds,
+            totalMined,
+            stockQuantity
+        };
+    }
+
+    // -------- 4. feladat lekérése --------
+    async function loadTask4() {
+        document.getElementById("log").textContent = "";
+        document.getElementById("taskdata").textContent = "";
+        document.getElementById("answerdata").textContent = "";
+        document.getElementById("submitresult").textContent = "";
+
+        log("4. feladat lekérése a szerverről...");
+
+        const resp = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/gettasks.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: 4,
+                teamcode: TEAMCODE
+            })
+        });
+
+        const task = await resp.json();
+        console.log("4. feladat raw:", task);
+
+        if (task.status !== "success") {
+            log("Hiba a feladat lekérésekor: " + (task.message || "ismeretlen hiba"));
+            return;
+        }
+
+        originalData4 = task.data;
+        originalHash4 = task.hash;
+
+        document.getElementById("taskdata").textContent =
+            JSON.stringify(task.data, null, 2);
+
+        log("4. feladat sikeresen lekérve.");
+    }
+
+    // -------- 4. feladat megoldása --------
+    function solveTask4() {
+        if (!originalData4) {
+            alert("Először kérd le a 4. feladatot!");
+            return;
+        }
+
+        log("Megoldás számítása a 4. feladatra...");
+
+        const answers = originalData4.questions.map(q => {
+            const solution = solveBasicUpgradeQuestion(q.params);
+            return {
+                id: q.ID,
+                answer: solution
+            };
+        });
+
+        computedAnswers4 = answers;
+
+        document.getElementById("answerdata").textContent =
+            JSON.stringify(answers, null, 2);
+
+        log("Megoldás kiszámítva. (answer_data frissítve)");
+    }
+
+    // -------- 4. feladat beküldése --------
+    async function submitTask4() {
+        if (!originalData4 || !originalHash4) {
+            alert("Először kérd le a 4. feladatot!");
+            return;
+        }
+        if (!computedAnswers4) {
+            alert("Először számítsd ki a megoldást (Megoldás kiszámítása gomb)!");
+            return;
+        }
+
+        log("Megoldás beküldése a szerverre...");
+
+        const resp = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/answer.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: originalData4.ID,      // = 4
+                teamcode: TEAMCODE,
+                original_data: originalData4,
+                original_hash: originalHash4,
+                answer_data: computedAnswers4
+            })
+        });
+
+        const result = await resp.json();
+        console.log("Beküldés eredménye:", result);
+
+        document.getElementById("submitresult").textContent =
+            JSON.stringify(result, null, 2);
+
+        if (result.status === "success") {
+            log("Beküldés sikeres, status=success");
+        } else {
+            log("Beküldésnél hiba történt: " + (result.message || "ismeretlen hiba"));
+        }
+    }
+</script>
+
+</body>
+</html>
