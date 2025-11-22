@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitfaragó – 3. feladat (BASICMINING)</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 1rem;
+            background: #f5f5f5;
+        }
+        h1 {
+            font-size: 1.4rem;
+        }
+        button {
+            margin: 0.25rem 0.25rem 0.25rem 0;
+            padding: 0.4rem 0.8rem;
+            cursor: pointer;
+        }
+        pre {
+            background: #111;
+            color: #eee;
+            padding: 0.5rem;
+            overflow-x: auto;
+            font-size: 0.8rem;
+        }
+        .panel {
+            background: white;
+            padding: 0.75rem;
+            margin-top: 0.75rem;
+            border-radius: 6px;
+            box-shadow: 0 0 4px rgba(0,0,0,0.1);
+        }
+        .ok { color: green; }
+        .err { color: darkred; }
+    </style>
+</head>
+<body>
+
+<h1>3. feladat – Mozgás és bányászás (BASICMINING)</h1>
+
+<button onclick="loadTask3()">3. feladat lekérése</button>
+<button onclick="solveTask3()">Megoldás kiszámítása (ellenőrzés)</button>
+<button onclick="submitTask3()">Megoldás beküldése a szerverre</button>
+
+<div class="panel">
+    <strong>Log:</strong>
+    <pre id="log"></pre>
+</div>
+
+<div class="panel">
+    <strong>Eredeti feladat (original_data):</strong>
+    <pre id="taskdata"></pre>
+</div>
+
+<div class="panel">
+    <strong>Számolt válasz (answer_data):</strong>
+    <pre id="answerdata"></pre>
+</div>
+
+<div class="panel">
+    <strong>Szerver válasza a beküldésre:</strong>
+    <pre id="submitresult"></pre>
+</div>
+
+<script>
+    const TEAMCODE = "a844b7d39462bf1f46d6";
+
+    // Játék paraméterek (a leírás szerint)
+    const SHIP_CAPACITY = 25; // max érc a hajón
+    const MOVE_SPEED   = 10;  // távolság / kör
+    const MINE_RATE    = 15;  // érc / kör
+
+    let originalData3 = null;
+    let originalHash3 = null;
+    let computedAnswers3 = null;
+
+    function log(msg, cls) {
+        const el = document.getElementById("log");
+        if (cls === "ok") el.innerHTML += "%c" + msg + "\n";
+        else el.textContent += msg + "\n";
+    }
+
+    // -------------------------------------------
+    // 2. feladat szerinti távolságmátrix
+    // -------------------------------------------
+    function distanceMatrix(positions) {
+        const n = positions.length;
+        const matrix = [];
+
+        for (let i = 0; i < n; i++) {
+            const row = [];
+            for (let j = 0; j < n; j++) {
+                if (i === j) {
+                    row.push(0);
+                } else {
+                    const dx = positions[i].x - positions[j].x;
+                    const dy = positions[i].y - positions[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    row.push(Math.ceil(dist)); // felfelé kerekítés!
+                }
+            }
+            matrix.push(row);
+        }
+        return matrix;
+    }
+
+    // hány kör egy adott távolság
+    function travelRounds(distance) {
+        return Math.ceil(distance / MOVE_SPEED);
+    }
+
+    // egy aszteroida teljes kibányászása: szétbontva "utakra"
+    // minden elem: { rounds: hány bányászkör, mined: mennyi érc ezen az úton }
+    function miningTrips(quantity) {
+        const trips = [];
+        let remaining = quantity;
+
+        while (remaining > 0) {
+            const amountThisTrip = Math.min(SHIP_CAPACITY, remaining); // max 25
+            const rounds = Math.ceil(amountThisTrip / MINE_RATE);      // 15 érc / kör
+            trips.push({ rounds, mined: amountThisTrip });
+            remaining -= amountThisTrip;
+        }
+        return trips;
+    }
+
+    // Egy BASICMINING kérdés megoldása:
+    // positions, shipCount (most 1), roundLimit (most nagy)
+    function solveBasicMiningQuestion(params) {
+        const positions = params.positions;
+        const dm = distanceMatrix(positions);
+
+        // Base index keresése
+        const baseIndex = positions.findIndex(p => p.type === "Base");
+        if (baseIndex === -1) {
+            throw new Error("Nincs Base a positions között!");
+        }
+
+        // Aszteroidák összegyűjtése indexszel, mennyiséggel
+        const asteroids = positions
+            .map((p, idx) => ({ ...p, idx }))
+            .filter(p => p.type === "Asteroid");
+
+        const shipCommands = [];
+        let totalRounds = 0;
+        let totalMined = 0;
+
+        // A hajó mindig STARTFROM-mal indul a bázisról
+        shipCommands.push({ command: "STARTFROM", position: baseIndex });
+
+        // Stratégia: mindegyik aszteroidát külön teljesen kibányásszuk
+        asteroids.forEach(ast => {
+            const trips = miningTrips(ast.quantity);
+            const distance = dm[baseIndex][ast.idx];
+            const moveOneWayRounds = travelRounds(distance);
+
+            totalMined += ast.quantity;
+
+            trips.forEach(trip => {
+                // Base -> Aszteroida
+                shipCommands.push({ command: "MOVE", position: ast.idx });
+                totalRounds += moveOneWayRounds;
+
+                // Bányászás
+                shipCommands.push({ command: "MINE", rounds: trip.rounds });
+                totalRounds += trip.rounds;
+
+                // Aszteroida -> Base (lerak, időbe nem kerül külön)
+                shipCommands.push({ command: "MOVE", position: baseIndex });
+                totalRounds += moveOneWayRounds;
+            });
+        });
+
+        return {
+            commands: [shipCommands],  // shipCount = 1 → 1 hajó parancsai
+            totalRounds,
+            totalMined
+        };
+    }
+
+    // -------------------------------
+    // 3. feladat lekérése a szerverről
+    // -------------------------------
+    async function loadTask3() {
+        document.getElementById("taskdata").textContent = "";
+        document.getElementById("answerdata").textContent = "";
+        document.getElementById("submitresult").textContent = "";
+        document.getElementById("log").textContent = "";
+
+        log("3. feladat lekérése a szerverről...");
+
+        const resp = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/gettasks.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: 3,
+                teamcode: TEAMCODE
+            })
+        });
+
+        const task = await resp.json();
+        console.log("3. feladat raw:", task);
+
+        if (task.status !== "success") {
+            log("Hiba a feladat lekérésekor: " + (task.message || "ismeretlen hiba"));
+            return;
+        }
+
+        originalData3 = task.data;
+        originalHash3 = task.hash;
+
+        document.getElementById("taskdata").textContent =
+            JSON.stringify(task.data, null, 2);
+
+        log("3. feladat sikeresen lekérve.");
+    }
+
+    // -------------------------------
+    // 3. feladat megoldásának kiszámítása
+    // -------------------------------
+    function solveTask3() {
+        if (!originalData3) {
+            alert("Először kérd le a 3. feladatot!");
+            return;
+        }
+
+        log("Megoldás számítása a 3. feladatra...");
+
+        const answers = originalData3.questions.map(q => {
+            const solution = solveBasicMiningQuestion(q.params);
+            log(`Kérdés ID=${q.ID} – totalRounds=${solution.totalRounds}, totalMined=${solution.totalMined}`);
+            return {
+                id: q.ID,
+                answer: solution
+            };
+        });
+
+        computedAnswers3 = answers;
+
+        document.getElementById("answerdata").textContent =
+            JSON.stringify(answers, null, 2);
+
+        log("Megoldás kiszámítva. (answer_data frissítve)");
+    }
+
+    // -------------------------------
+    // 3. feladat megoldás beküldése
+    // -------------------------------
+    async function submitTask3() {
+        if (!originalData3 || !originalHash3) {
+            alert("Először kérd le a 3. feladatot!");
+            return;
+        }
+        if (!computedAnswers3) {
+            alert("Először számítsd ki a megoldást (Megoldás kiszámítása gomb)!");
+            return;
+        }
+
+        log("Megoldás beküldése a szerverre...");
+
+        const resp = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/answer.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: originalData3.ID,       // = 3
+                teamcode: TEAMCODE,
+                original_data: originalData3,
+                original_hash: originalHash3,
+                answer_data: computedAnswers3
+            })
+        });
+
+        const result = await resp.json();
+        console.log("Beküldés eredménye:", result);
+
+        document.getElementById("submitresult").textContent =
+            JSON.stringify(result, null, 2);
+
+        if (result.status === "success") {
+            log("Beküldés sikeres, státusz: success");
+        } else {
+            log("Beküldésnél hiba történt: " + (result.message || "ismeretlen hiba"));
+        }
+    }
+</script>
+
+</body>
+</html>
