@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>BitKözpont – Univerzális feladatmegoldó (1–20)</title>
+    <style>
+        body { font-family: Arial, sans-serif; background:#222; color:#eee; padding:20px; }
+        label { display:inline-block; margin-bottom:6px; }
+        input[type="number"], input[type="text"], input[type="range"] { padding:4px 6px; margin-right:8px; }
+        button { padding:6px 12px; margin:4px 4px 4px 0; cursor:pointer; }
+        button:hover { background:#444; }
+        pre {
+            background:#111;
+            color:#0f0;
+            padding:10px;
+            border-radius:6px;
+            font-size:0.8rem;
+            overflow-x:auto;
+            max-height:300px;
+        }
+        .panel {
+            background:#181818;
+            padding:10px;
+            border-radius:8px;
+            margin-top:10px;
+            box-shadow:0 0 4px rgba(0,0,0,0.4);
+        }
+        #simCanvas {
+            background:#000;
+            border-radius:8px;
+            margin-top:8px;
+            border:1px solid #555;
+        }
+    </style>
+</head>
+<body>
+
+<h1>BitKözpont – Univerzális feladatmegoldó (1–20)</h1>
+
+<div>
+    <label>Teamcode:
+        <input type="text" id="teamcode" value="a844b7d39462bf1f46d6" size="30">
+    </label>
+</div>
+
+<div style="margin-top:8px;">
+    <label>Feladat ID (1–20):
+        <input type="number" id="taskIdInput" min="1" max="20" value="7">
+    </label>
+    <button onclick="loadTask()">Feladat lekérése</button>
+    <button onclick="generateAnswers()">Megoldás generálása</button>
+    <button onclick="submitAnswers()">Megoldás beküldése</button>
+</div>
+
+<div class="panel">
+    <strong>Kapott feladat (gettasks.php → data):</strong>
+    <pre id="taskDataPre">Nincs adat</pre>
+</div>
+
+<div class="panel">
+    <strong>Generált answer_data (id + answer per kérdés):</strong>
+    <pre id="answersPre">Nincs adat</pre>
+</div>
+
+<div class="panel">
+    <strong>Beküldött JSON (answer.php):</strong>
+    <pre id="requestPre">Nincs adat</pre>
+</div>
+
+<div class="panel">
+    <strong>Szerver válasza (answer.php):</strong>
+    <pre id="responsePre">Nincs adat</pre>
+</div>
+
+<div class="panel">
+    <strong>Űrhajó szimuláció (SOLVEMAP alapú):</strong>
+    <div style="margin-top:4px;">
+        <button onclick="startSimulation()">Szimuláció indítása (SOLVEMAP)</button>
+        <button onclick="stopSimulation()">Leállítás</button>
+        <label> Sebesség:
+            <input type="range" id="simSpeed" min="0.3" max="3" step="0.1" value="1">
+        </label>
+    </div>
+    <small>Először kérd le a feladatot, generáld a megoldást, majd indítsd a szimulációt.</small>
+    <canvas id="simCanvas" width="900" height="550"></canvas>
+</div>
+
+<script>
+// ========= Globális állapot =========
+let originalEnvelope = null;  // teljes gettasks válasz
+let originalData = null;      // data
+let originalHash = null;      // hash
+let generatedAnswers = null;  // answer_data (tömb: {id, answer})
+
+// ========= Feladat lekérése =========
+async function loadTask() {
+    const teamcode = document.getElementById("teamcode").value.trim();
+    const taskId = parseInt(document.getElementById("taskIdInput").value, 10);
+
+    originalEnvelope = null;
+    originalData = null;
+    originalHash = null;
+    generatedAnswers = null;
+
+    document.getElementById("taskDataPre").textContent = "Lekérés folyamatban...";
+    document.getElementById("answersPre").textContent = "Nincs adat";
+    document.getElementById("requestPre").textContent = "Nincs adat";
+    document.getElementById("responsePre").textContent = "Nincs adat";
+
+    try {
+        const res = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/gettasks.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: taskId,
+                teamcode: teamcode
+            })
+        });
+
+        const json = await res.json();
+        originalEnvelope = json;
+
+        if (json.status !== "success") {
+            document.getElementById("taskDataPre").textContent =
+                "Hiba a feladat lekérésekor:\n" + JSON.stringify(json, null, 2);
+            return;
+        }
+
+        originalData = json.data;
+        originalHash = json.hash;
+
+        document.getElementById("taskDataPre").textContent =
+            JSON.stringify(json.data, null, 2);
+
+    } catch (err) {
+        document.getElementById("taskDataPre").textContent =
+            "Fetch hiba: " + err;
+    }
+}
+
+// ========= Segédfüggvények =========
+
+// Távolságmátrix (2. feladat logika)
+function distanceMatrix(positions) {
+    const n = positions.length;
+    const mat = Array.from({length:n}, () => Array(n).fill(0));
+    for (let i=0;i<n;i++) {
+        for (let j=0;j<n;j++) {
+            if (i === j) continue;
+            const dx = positions[i].x - positions[j].x;
+            const dy = positions[i].y - positions[j].y;
+            const d = Math.sqrt(dx*dx + dy*dy);
+            mat[i][j] = Math.ceil(d);
+        }
+    }
+    return mat;
+}
+
+// ========= AI egy kérdésre (típusfüggő) =========
+function solveQuestion(q) {
+    const params = q.params;
+    const type = params.type;
+
+    if (type === "DISTMATRIX") {
+        // 2. feladat
+        const mat = distanceMatrix(params.positions);
+        return mat;
+    }
+
+    if (type === "BASICMINING") {
+        // 3. feladat: minden aszteroida kibányászása (egyszerű megoldás)
+        const positions = params.positions;
+        const shipCount = params.shipCount;
+        const baseIndex = positions.findIndex(p => p.type === "Base");
+        const asteroids = positions
+            .map((p,idx) => ({...p, idx}))
+            .filter(p => p.type === "Asteroid");
+
+        const commandsPerShip = [];
+        for (let s=0; s<shipCount; s++) {
+            const cmds = [];
+            cmds.push({ command:"STARTFROM", position: baseIndex });
+            for (const a of asteroids) {
+                cmds.push({ command:"MOVE", position:a.idx });
+                cmds.push({ command:"MINE", rounds:50 });
+                cmds.push({ command:"MOVE", position:baseIndex });
+            }
+            commandsPerShip.push(cmds);
+        }
+
+        return {
+            commands: commandsPerShip,
+            totalRounds: 0,
+            totalMined: 0
+        };
+    }
+
+    if (type === "BASICUPGRADE") {
+        // 4. feladat: max upgrade + bányászat (egyszerű megoldás)
+        const positions = params.positions;
+        const baseIndex = positions.findIndex(p => p.type === "Base");
+        const astIndex = positions.findIndex(p => p.type === "Asteroid");
+        const shipCount = params.shipCount;
+
+        const commandsPerShip = [];
+        const cmds = [];
+        cmds.push({ command:"STARTFROM", position: baseIndex });
+
+        // először sok bányászat, hogy legyen érc
+        for (let i=0; i<20; i++) {
+            cmds.push({ command:"MOVE", position: astIndex });
+            cmds.push({ command:"MINE", rounds: 20 });
+            cmds.push({ command:"MOVE", position: baseIndex });
+        }
+
+        // upgrade-ek maxra
+        for (let i=0;i<5;i++) cmds.push({ command:"UPGRADE", attribute:"mining_speed" });
+        for (let i=0;i<5;i++) cmds.push({ command:"UPGRADE", attribute:"move_speed" });
+        for (let i=0;i<5;i++) cmds.push({ command:"UPGRADE", attribute:"capacity" });
+
+        // még bányászat
+        cmds.push({ command:"MOVE", position: astIndex });
+        cmds.push({ command:"MINE", rounds: 50 });
+        cmds.push({ command:"MOVE", position: baseIndex });
+
+        commandsPerShip.push(cmds);
+
+        for (let s=1; s<shipCount; s++) {
+            commandsPerShip.push([
+                { command:"STARTFROM", position: baseIndex }
+            ]);
+        }
+
+        return {
+            commands: commandsPerShip,
+            totalRounds: 0,
+            totalMined: 0,
+            stockQuantity: 0
+        };
+    }
+
+    if (type === "SOLVEMAP") {
+        // 6. + 7–20. feladatok – pontszerzés (fejleszt + új hajók vásárlása)
+        return solveSolvemap(params);
+    }
+
+    // Ismeretlen típus esetén:
+    return {};
+}
+
+// ========= FELTURBÓZOTT SOLVEMAP AI =========
+function solveSolvemap(params) {
+    const positions = params.positions;
+    const shipCountInitial = params.shipCount;
+    const roundLimit = params.roundLimit;
+
+    const distMat = distanceMatrix(positions);
+
+    // hajó alap statok
+    const BASE_MOVE = 10;
+    const BASE_CAP = 25;
+    const BASE_MINE = 15;
+
+    const COST_MOVE = 70, STEP_MOVE = 4;
+    const COST_CAP  = 100, STEP_CAP  = 15;
+    const COST_MINE = 35, STEP_MINE = 8;
+    const MAX_UP = 5;
+
+    // összes bázis
+    const baseIndexes = positions
+        .map((p,i)=>p.type==="Base" ? i : -1)
+        .filter(i=>i!==-1);
+
+    if (baseIndexes.length === 0) {
+        const cmdsEmpty = Array.from({length:shipCountInitial}, ()=>[]);
+        return { commands: cmdsEmpty, newShips: [] };
+    }
+
+    // aszteroidák + maradék mennyiség
+    const asteroids = positions
+        .map((p,i)=>p.type==="Asteroid" ? {idx:i, quantity:p.quantity} : null)
+        .filter(x=>x);
+
+    if (asteroids.length === 0) {
+        const cmdsEmpty = Array.from({length:shipCountInitial}, ()=>[
+            { command:"STARTFROM", position: baseIndexes[0] }
+        ]);
+        return { commands: cmdsEmpty, newShips: [] };
+    }
+
+    const remaining = {};
+    let totalOre = 0;
+    for (const a of asteroids) {
+        remaining[a.idx] = a.quantity;
+        totalOre += a.quantity;
+    }
+
+    // aszteroidák hozzárendelése legközelebbi bázishoz
+    const assignedBase = {};
+    for (const a of asteroids) {
+        let bestB = baseIndexes[0];
+        let bestD = distMat[a.idx][bestB];
+        for (const b of baseIndexes) {
+            const d = distMat[a.idx][b];
+            if (d < bestD) { bestD = d; bestB = b; }
+        }
+        assignedBase[a.idx] = bestB;
+    }
+
+    // pályaméret alapú stratégia
+    const SMALL_ORE = 400;
+    const MEDIUM_ORE = 1200;
+
+    const shortGame  = roundLimit <= 200;
+    const midGame    = roundLimit > 200 && roundLimit <= 400;
+    const bigGame    = roundLimit  > 400;
+
+    let enableUpgrades = true;
+    let enableNewShips = true;
+
+    if (totalOre <= SMALL_ORE || shortGame) {
+        enableUpgrades = false;
+        enableNewShips = false;
+    } else if (totalOre <= MEDIUM_ORE || midGame) {
+        enableUpgrades = true;
+        enableNewShips = true;
+    } else {
+        enableUpgrades = true;
+        enableNewShips = true;
+    }
+
+    const maxMiningUp = enableUpgrades ? (totalOre > MEDIUM_ORE ? 5 : 3) : 0;
+    const maxMoveUp   = enableUpgrades ? (totalOre > MEDIUM_ORE ? 4 : 2) : 0;
+    const maxCapUp    = enableUpgrades ? (totalOre > MEDIUM_ORE ? 4 : 2) : 0;
+
+    const NEW_SHIP_TIME_LIMIT =
+        !enableNewShips ? 0 :
+        (totalOre > MEDIUM_ORE ? 0.6 : 0.4);  // későn már ne vegyünk új hajót
+
+    const MAX_SHIPS = 12; // ésszerű plafon
+
+    // hajók + parancsok
+    const ships = [];
+    const commandsPerShip = [];
+
+    for (let s=0; s<shipCountInitial; s++) {
+        const base = baseIndexes[s % baseIndexes.length];
+        const ship = {
+            pos: base,
+            baseIndex: base,
+            move: BASE_MOVE,
+            cap: BASE_CAP,
+            mine: BASE_MINE,
+            cargo: 0,
+            t: 0,
+            up: { move:0, cap:0, mine:0 },
+            active: true
+        };
+        ships.push(ship);
+        const cmds = [];
+        cmds.push({ command:"STARTFROM", position: base });
+        commandsPerShip.push(cmds);
+    }
+
+    const stock = { value: 0 };
+    const newShipsTurns = []; // hajóvásárlási körök
+
+    const SAFE_LIMIT = Math.floor(roundLimit * 0.95);
+
+    // ========= Folyamatos upgrade logika – dinamikus korlátokkal =========
+    function tryAutoUpgrades(ship, cmds, stock) {
+        if (!enableUpgrades) return;
+        if (ship.t > roundLimit * 0.7) return;
+
+        let changed = true;
+        while (changed) {
+            changed = false;
+
+            // 1) mining_speed – ez hozza a legtöbb ércet
+            if (ship.up.mine < maxMiningUp &&
+                stock.value >= COST_MINE &&
+                ship.t < roundLimit * 0.6) {
+                cmds.push({ command:"UPGRADE", attribute:"mining_speed" });
+                stock.value -= COST_MINE;
+                ship.mine += STEP_MINE;
+                ship.up.mine++;
+                ship.t++; // 1 kör upgrade
+                changed = true;
+                continue;
+            }
+
+            // 2) capacity
+            if (ship.up.cap < maxCapUp &&
+                stock.value >= COST_CAP &&
+                ship.t < roundLimit * 0.5) {
+                cmds.push({ command:"UPGRADE", attribute:"capacity" });
+                stock.value -= COST_CAP;
+                ship.cap += STEP_CAP;
+                ship.up.cap++;
+                ship.t++;
+                changed = true;
+                continue;
+            }
+
+            // 3) move_speed
+            if (ship.up.move < maxMoveUp &&
+                stock.value >= COST_MOVE &&
+                ship.t < roundLimit * 0.5) {
+                cmds.push({ command:"UPGRADE", attribute:"move_speed" });
+                stock.value -= COST_MOVE;
+                ship.move += STEP_MOVE;
+                ship.up.move++;
+                ship.t++;
+                changed = true;
+                continue;
+            }
+        }
+    }
+
+    // ========= Új hajók vásárlása – óvatosan =========
+    function tryBuyNewShips(stock, newShipsTurns, currentRound, ships, commandsPerShip) {
+        if (!enableNewShips) return;
+        if (currentRound >= roundLimit * NEW_SHIP_TIME_LIMIT) return;
+
+        while (stock.value >= 300 && ships.length < MAX_SHIPS) {
+            stock.value -= 300;
+            newShipsTurns.push(currentRound);
+
+            const newIndex = ships.length;
+            const base = baseIndexes[newIndex % baseIndexes.length];
+
+            const newShip = {
+                pos: base,
+                baseIndex: base,
+                move: BASE_MOVE,
+                cap: BASE_CAP,
+                mine: BASE_MINE,
+                cargo: 0,
+                t: currentRound + 1, // 1 kör építés után indul
+                up: { move:0, cap:0, mine:0 },
+                active: true
+            };
+            ships.push(newShip);
+
+            const cmds = [];
+            cmds.push({ command:"STARTFROM", position: base });
+            commandsPerShip.push(cmds);
+        }
+    }
+
+    // ========= Aszteroida választás – érc / kör hatékonyság alapján =========
+    function bestAstForShip(ship) {
+        let bestIdx = null;
+        let bestScore = 0;
+
+        for (const a of asteroids) {
+            const idx = a.idx;
+            const rem = remaining[idx];
+            if (rem <= 0) continue;
+
+            const base = assignedBase[idx];
+            if (base !== ship.baseIndex) continue;
+
+            const distOut = distMat[ship.baseIndex][idx];
+            const distBack = distMat[idx][base];
+            const travelDist = distOut + distBack;
+
+            const moveRounds = Math.ceil(travelDist / ship.move) || 1;
+
+            const maxMinedThisTrip = Math.min(ship.cap, rem);
+            const mineRounds = Math.ceil(maxMinedThisTrip / ship.mine) || 1;
+
+            const totalTripRounds = moveRounds + mineRounds;
+            const efficiency = maxMinedThisTrip / totalTripRounds;
+
+            if (efficiency > bestScore) {
+                bestScore = efficiency;
+                bestIdx = idx;
+            }
+        }
+        return bestIdx;
+    }
+
+    // ========= Trip szimuláció: base -> asteroid -> mine -> base =========
+    function simulateTrip(ship, astIndex, cmds) {
+        const base = assignedBase[astIndex];
+        ship.baseIndex = base;
+
+        if (ship.pos !== astIndex) {
+            const d1 = distMat[ship.pos][astIndex];
+            const r1 = Math.ceil(d1 / ship.move);
+            if (r1 > 0) {
+                ship.t += r1;
+                cmds.push({ command:"MOVE", position: astIndex });
+                ship.pos = astIndex;
+            }
+        }
+
+        let free = ship.cap - ship.cargo;
+        let avail = remaining[astIndex];
+
+        if (free > 0 && avail > 0) {
+            const target = Math.min(free, avail);
+            const mineRounds = Math.ceil(target / ship.mine);
+            ship.t += mineRounds;
+            cmds.push({ command:"MINE", rounds: mineRounds });
+
+            const mined = Math.min(avail, mineRounds * ship.mine, free);
+            ship.cargo += mined;
+            remaining[astIndex] -= mined;
+        }
+
+        if (ship.pos !== base) {
+            const d2 = distMat[ship.pos][base];
+            const r2 = Math.ceil(d2 / ship.move);
+            if (r2 > 0) {
+                ship.t += r2;
+                cmds.push({ command:"MOVE", position: base });
+                ship.pos = base;
+            }
+        }
+
+        stock.value += ship.cargo;
+        ship.cargo = 0;
+    }
+
+    // ========= Fő bányász ciklus =========
+    function remainingOreExists() {
+        for (const a of asteroids) {
+            if (remaining[a.idx] > 0) return true;
+        }
+        return false;
+    }
+
+    while (remainingOreExists()) {
+        let bestShipIndex = -1;
+        let bestT = Infinity;
+        for (let i=0; i<ships.length; i++) {
+            const sh = ships[i];
+            if (!sh.active) continue;
+            if (sh.t < bestT) {
+                bestT = sh.t;
+                bestShipIndex = i;
+            }
+        }
+
+        if (bestShipIndex === -1) break;
+        const ship = ships[bestShipIndex];
+        const cmds = commandsPerShip[bestShipIndex];
+
+        if (ship.t >= SAFE_LIMIT) {
+            ship.active = false;
+            continue;
+        }
+
+        const aIdx = bestAstForShip(ship);
+        if (aIdx === null) {
+            ship.active = false;
+            continue;
+        }
+
+        simulateTrip(ship, aIdx, cmds);
+        tryAutoUpgrades(ship, cmds, stock);
+
+        const currentRound = Math.floor(ship.t);
+        tryBuyNewShips(stock, newShipsTurns, currentRound, ships, commandsPerShip);
+
+        if (ship.t >= SAFE_LIMIT) {
+            ship.active = false;
+        }
+    }
+
+    return {
+        commands: commandsPerShip,
+        newShips: newShipsTurns
+    };
+}
+
+// ========= Megoldás generálása az aktuális feladatra =========
+function generateAnswers() {
+    if (!originalData) {
+        alert("Előbb kérd le a feladatot!");
+        return;
+    }
+
+    const questions = originalData.questions || [];
+    const answers = questions.map(q => {
+        const solved = solveQuestion(q);
+        return {
+            id: q.ID,   // kérdés ID-je
+            answer: solved
+        };
+    });
+
+    generatedAnswers = answers;
+
+    document.getElementById("answersPre").textContent =
+        JSON.stringify(answers, null, 2);
+}
+
+// ========= Megoldás beküldése =========
+async function submitAnswers() {
+    if (!originalData || !originalHash) {
+        alert("Nincs lekért feladat!");
+        return;
+    }
+    if (!generatedAnswers) {
+        alert("Nincs generált megoldás!");
+        return;
+    }
+
+    const teamcode = document.getElementById("teamcode").value.trim();
+
+    const payload = {
+        id: originalData.ID,          // fontos: a feladat ID-je (pl. 7)
+        teamcode: teamcode,
+        original_data: originalData,  // teljes data
+        original_hash: originalHash,  // gettasks hash
+        answer_data: generatedAnswers // [{ id: questionID, answer: {...} }]
+    };
+
+    document.getElementById("requestPre").textContent =
+        JSON.stringify(payload, null, 2);
+
+    try {
+        const res = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/answer.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const json = await res.json();
+        document.getElementById("responsePre").textContent =
+            JSON.stringify(json, null, 2);
+
+    } catch (err) {
+        document.getElementById("responsePre").textContent =
+            "Fetch hiba: " + err;
+    }
+}
+
+/* ========= SZIMULÁCIÓS UI – CANVAS, DIZÁJNOLT OBJEKTUMOK ========= */
+
+let simState = null;
+let simRunning = false;
+let simLastTs = null;
+
+const shipColors = [
+    "#ff5555", "#55ff55", "#5599ff", "#ffcc55",
+    "#ff55ff", "#55ffff", "#ffffff", "#ff8800",
+    "#00ff88", "#8888ff", "#ff8888", "#88ff88"
+];
+
+// Űrállomás (Base) – hexagon + glow
+function drawBase(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.strokeStyle = "#00ffcc";
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "#00ffaa";
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    const size = 12;
+    for (let i=0; i<6; i++) {
+        const angle = (Math.PI/3)*i;
+        const px = Math.cos(angle) * size;
+        const py = Math.sin(angle) * size;
+        if (i===0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.stroke();
+
+    // középső mag
+    ctx.fillStyle = "#003333";
+    ctx.beginPath();
+    ctx.arc(0, 0, 4, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+// Aszteroida – kráteres kő
+function drawAsteroid(ctx, x, y, seed) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    const rand = (n) => {
+        // determinisztikus "random" az indexhez
+        const x = Math.sin(n*999) * 10000;
+        return x - Math.floor(x);
+    };
+
+    const r = 9 + rand(seed)*4;
+    ctx.fillStyle = "#5c3f2e";
+    ctx.beginPath();
+    const steps = 10;
+    for (let i = 0; i < steps; i++) {
+        let angle = (Math.PI * 2 / steps) * i;
+        let noise = rand(seed*31 + i)*4;
+        let px = Math.cos(angle) * (r + noise);
+        let py = Math.sin(angle) * (r + noise);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // kráterek
+    ctx.fillStyle = "#3b261a";
+    for (let i = 0; i < 3; i++) {
+        let cx = (rand(seed*7 + i)*10) - 5;
+        let cy = (rand(seed*13 + i)*10) - 5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 2.5 + rand(seed*17 + i)*1.5, 0, Math.PI*2);
+        ctx.fill();
+    }
+
+    ctx.restore();
+}
+
+// Hajó – irányba forduló rakéta faroklánggal
+function drawShip(ctx, ship) {
+    ctx.save();
+    ctx.translate(ship.x, ship.y);
+
+    let angle = 0;
+    if (ship.vx !== 0 || ship.vy !== 0) {
+        angle = Math.atan2(ship.vy, ship.vx);
+    }
+    ctx.rotate(angle);
+
+    // test
+    ctx.fillStyle = ship.color;
+    ctx.beginPath();
+    ctx.moveTo(12, 0);       // orr
+    ctx.lineTo(-8, -6);
+    ctx.lineTo(-8, 6);
+    ctx.closePath();
+    ctx.fill();
+
+    // körvonal
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // farokláng
+    ctx.fillStyle = "orange";
+    ctx.beginPath();
+    ctx.moveTo(-8, -3);
+    ctx.lineTo(-14 - Math.random()*4, 0);
+    ctx.lineTo(-8, 3);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function buildSimulation(positions, solvemapAnswer) {
+    const commandsPerShip = solvemapAnswer.commands || [];
+    const canvas = document.getElementById("simCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // koordináta skálázás
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    positions.forEach(p => {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    });
+    if (minX === maxX) { minX -= 1; maxX += 1; }
+    if (minY === maxY) { minY -= 1; maxY += 1; }
+
+    const margin = 50;
+    const scaleX = (canvas.width - 2*margin) / (maxX - minX);
+    const scaleY = (canvas.height - 2*margin) / (maxY - minY);
+
+    function toScreen(p) {
+        const sx = margin + (p.x - minX) * scaleX;
+        const sy = canvas.height - (margin + (p.y - minY) * scaleY);
+        return { x: sx, y: sy };
+    }
+
+    const ships = [];
+
+    commandsPerShip.forEach((cmds, idx) => {
+        if (!cmds || cmds.length === 0) return;
+
+        let segments = [];
+        let currentPos = null;
+
+        cmds.forEach(cmd => {
+            if (cmd.command === "STARTFROM") {
+                const p = positions[cmd.position];
+                if (!p) return;
+                const sp = toScreen(p);
+                currentPos = { x: sp.x, y: sp.y };
+            } else if (cmd.command === "MOVE" && currentPos) {
+                const p2 = positions[cmd.position];
+                if (!p2) return;
+                const sp2 = toScreen(p2);
+                const from = { x: currentPos.x, y: currentPos.y };
+                const to   = { x: sp2.x, y: sp2.y };
+                const duration = 800; // vizuális idő (ms)
+                segments.push({ type:"move", from, to, duration });
+                currentPos = to;
+            } else if (cmd.command === "MINE" && currentPos) {
+                const duration = 400;
+                segments.push({ type:"wait", at:{ x: currentPos.x, y: currentPos.y }, duration });
+            } else if (cmd.command === "UPGRADE" && currentPos) {
+                const duration = 300;
+                segments.push({ type:"wait", at:{ x: currentPos.x, y: currentPos.y }, duration });
+            }
+        });
+
+        if (segments.length > 0 && currentPos) {
+            const firstSeg = segments[0];
+            const startX = firstSeg.type === "move" ? firstSeg.from.x : firstSeg.at.x;
+            const startY = firstSeg.type === "move" ? firstSeg.from.y : firstSeg.at.y;
+            ships.push({
+                color: shipColors[idx % shipColors.length],
+                segments,
+                currentSegmentIndex: 0,
+                currentTime: 0,
+                x: startX,
+                y: startY,
+                lastX: startX,
+                lastY: startY,
+                vx: 0,
+                vy: 0
+            });
+        }
+    });
+
+    return {
+        canvas,
+        ctx,
+        positions,
+        toScreen,
+        ships
+    };
+}
+
+function drawSimulationFrame(state) {
+    const { canvas, ctx, positions, toScreen, ships } = state;
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // háttér – kis "csillagok"
+    ctx.fillStyle = "#000015";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = "#444";
+    for (let i=0;i<40;i++) {
+        const x = Math.random()*canvas.width;
+        const y = Math.random()*canvas.height;
+        ctx.fillRect(x, y, 1, 1);
+    }
+
+    // bázisok és aszteroidák
+    positions.forEach((p, idx) => {
+        const sp = toScreen(p);
+        if (p.type === "Base") {
+            drawBase(ctx, sp.x, sp.y);
+        } else if (p.type === "Asteroid") {
+            drawAsteroid(ctx, sp.x, sp.y, idx+1);
+        }
+    });
+
+    // hajók
+    ships.forEach(ship => {
+        drawShip(ctx, ship);
+    });
+}
+
+function updateSimulation(state, dt) {
+    const speedSlider = document.getElementById("simSpeed");
+    const speed = parseFloat(speedSlider.value) || 1;
+    const scaledDt = dt * speed;
+
+    let active = false;
+
+    state.ships.forEach(ship => {
+        if (ship.currentSegmentIndex >= ship.segments.length) return;
+
+        active = true;
+
+        let seg = ship.segments[ship.currentSegmentIndex];
+        ship.currentTime += scaledDt;
+
+        if (ship.currentTime >= seg.duration) {
+            if (seg.type === "move") {
+                ship.x = seg.to.x;
+                ship.y = seg.to.y;
+            } else if (seg.type === "wait") {
+                ship.x = seg.at.x;
+                ship.y = seg.at.y;
+            }
+            ship.currentTime -= seg.duration;
+            ship.currentSegmentIndex++;
+            if (ship.currentSegmentIndex < ship.segments.length) {
+                seg = ship.segments[ship.currentSegmentIndex];
+                if (seg.type === "move") {
+                    ship.x = seg.from.x;
+                    ship.y = seg.from.y;
+                } else {
+                    ship.x = seg.at.x;
+                    ship.y = seg.at.y;
+                }
+            }
+        } else {
+            const t = Math.max(0, Math.min(1, ship.currentTime / seg.duration));
+            if (seg.type === "move") {
+                ship.x = seg.from.x + (seg.to.x - seg.from.x)*t;
+                ship.y = seg.from.y + (seg.to.y - seg.from.y)*t;
+            } else if (seg.type === "wait") {
+                ship.x = seg.at.x;
+                ship.y = seg.at.y;
+            }
+        }
+
+        // mozgásvektor a rakéta irányához
+        ship.vx = ship.x - ship.lastX;
+        ship.vy = ship.y - ship.lastY;
+        ship.lastX = ship.x;
+        ship.lastY = ship.y;
+    });
+
+    return active;
+}
+
+function simLoop(timestamp) {
+    if (!simRunning || !simState) return;
+
+    if (simLastTs == null) simLastTs = timestamp;
+    const dt = timestamp - simLastTs;
+    simLastTs = timestamp;
+
+    const stillActive = updateSimulation(simState, dt);
+    drawSimulationFrame(simState);
+
+    if (stillActive) {
+        requestAnimationFrame(simLoop);
+    } else {
+        simRunning = false;
+    }
+}
+
+function startSimulation() {
+    if (!originalData || !generatedAnswers) {
+        alert("Előbb kérd le a feladatot és generáld a megoldást!");
+        return;
+    }
+
+    const solvemapQuestion = (originalData.questions || []).find(
+        q => q.params && q.params.type === "SOLVEMAP"
+    );
+    if (!solvemapQuestion) {
+        alert("Nincs SOLVEMAP típusú kérdés ebben a feladatban.");
+        return;
+    }
+
+    const ansObj = generatedAnswers.find(a => a.id === solvemapQuestion.ID);
+    if (!ansObj || !ansObj.answer || !ansObj.answer.commands) {
+        alert("Ehhez a SOLVEMAP kérdéshez még nincs érvényes válasz. Generáld le újra!");
+        return;
+    }
+
+    simState = buildSimulation(solvemapQuestion.params.positions, ansObj.answer);
+    simRunning = true;
+    simLastTs = null;
+    requestAnimationFrame(simLoop);
+}
+
+function stopSimulation() {
+    simRunning = false;
+}
+
+</script>
+
+</body>
+</html>
