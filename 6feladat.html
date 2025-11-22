@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="hu">
+
+<head>
+    <meta charset="UTF-8">
+    <title>6. Feladat – SOLVEMAP Tesztelő</title>
+</head>
+
+<body>
+    <h1>6. Feladat – Véletlen térkép tesztelő</h1>
+
+    <button onclick="loadTask()">Feladat lekérése</button>
+    <button onclick="sendSolution()">Megoldás beküldése</button>
+
+    <h2>Kapott feladat:</h2>
+    <pre id="taskData"></pre>
+
+    <h2>Beküldendő JSON:</h2>
+    <pre id="sendJson"></pre>
+
+    <h2>Szerver válasza:</h2>
+    <pre id="response"></pre>
+
+    <script>
+        const teamcode = "a844b7d39462bf1f46d6";
+        let loadedTask = null;
+
+        // ===============================
+        //  FELADAT LEKÉRÉSE
+        // ===============================
+        async function loadTask() {
+            document.getElementById("taskData").textContent = "Betöltés...";
+
+            const res = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/gettasks.php", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    id: 6,
+                    teamcode: teamcode
+                })
+            });
+
+            const data = await res.json();
+            loadedTask = data;
+
+            document.getElementById("taskData").textContent =
+                JSON.stringify(data, null, 2);
+
+            console.log("Feladat betöltve:", data);
+        }
+
+        // ===============================
+        //  MEGOLDÁS BEKÜLDÉSE
+        // ===============================
+        async function sendSolution() {
+            if (!loadedTask) {
+                alert("Előbb töltsd be a feladatot!");
+                return;
+            }
+
+            // HELYES kérdés ID (nem a feladat ID!)
+            const questionID = parseInt(loadedTask.data.questions[0].ID);
+
+            // Ide kerülnek a parancsok – jelenleg üres, tesztként
+            const commands = [
+                [] // hajó 0 parancsai
+            ];
+
+            const newShips = [];
+
+            const answerPayload = {
+                id: questionID,
+                teamcode: teamcode,
+                answer_data: {
+                    commands: commands,
+                    newShips: newShips
+                }
+            };
+
+            // KIÍRJUK, mit küldünk!
+            document.getElementById("sendJson").textContent =
+                JSON.stringify(answerPayload, null, 2);
+
+            console.log("Beküldött JSON:", answerPayload);
+
+            // Beküldés
+            const res = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/answer.php", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(answerPayload)
+            });
+
+            const result = await res.json();
+
+            document.getElementById("response").textContent =
+                JSON.stringify(result, null, 2);
+
+            console.log("Szerver válasza:", result);
+        }
+    </script>
+</body>
+</html>

@@ -8,7 +8,7 @@
 </head>
 <body>
     
-<button onclick="loadTask1()">1. feladat lekérése</button>
+<button onclick="loadAllTasks()">1. feladat lekérése</button>
 <div id="taskdata"></div>
 
     <script>
@@ -38,7 +38,7 @@ function loadTask1() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            id:4,               // 🔥 KONKRÉT FELADAT ID = 1
+            id:7,               // 🔥 KONKRÉT FELADAT ID = 1
             teamcode: csapatkod
         })
     })
