@@ -86,13 +86,11 @@
 </div>
 
 <script>
-// ========= Globális állapot =========
-let originalEnvelope = null;  // teljes gettasks válasz
-let originalData = null;      // data
-let originalHash = null;      // hash
-let generatedAnswers = null;  // answer_data (tömb: {id, answer})
+let originalEnvelope = null;
+let originalData = null;
+let originalHash = null;
+let generatedAnswers = null;
 
-// ========= Feladat lekérése =========
 async function loadTask() {
     const teamcode = document.getElementById("teamcode").value.trim();
     const taskId = parseInt(document.getElementById("taskIdInput").value, 10);
@@ -138,9 +136,6 @@ async function loadTask() {
     }
 }
 
-// ========= Segédfüggvények =========
-
-// Távolságmátrix (2. feladat logika)
 function distanceMatrix(positions) {
     const n = positions.length;
     const mat = Array.from({length:n}, () => Array(n).fill(0));
@@ -156,19 +151,16 @@ function distanceMatrix(positions) {
     return mat;
 }
 
-// ========= AI egy kérdésre (típusfüggő) =========
 function solveQuestion(q) {
     const params = q.params;
     const type = params.type;
 
     if (type === "DISTMATRIX") {
-        // 2. feladat
         const mat = distanceMatrix(params.positions);
         return mat;
     }
 
     if (type === "BASICMINING") {
-        // 3. feladat: minden aszteroida kibányászása (egyszerű megoldás)
         const positions = params.positions;
         const shipCount = params.shipCount;
         const baseIndex = positions.findIndex(p => p.type === "Base");
@@ -196,7 +188,6 @@ function solveQuestion(q) {
     }
 
     if (type === "BASICUPGRADE") {
-        // 4. feladat: max upgrade + bányászat (egyszerű megoldás)
         const positions = params.positions;
         const baseIndex = positions.findIndex(p => p.type === "Base");
         const astIndex = positions.findIndex(p => p.type === "Asteroid");
@@ -206,19 +197,16 @@ function solveQuestion(q) {
         const cmds = [];
         cmds.push({ command:"STARTFROM", position: baseIndex });
 
-        // először sok bányászat, hogy legyen érc
         for (let i=0; i<20; i++) {
             cmds.push({ command:"MOVE", position: astIndex });
             cmds.push({ command:"MINE", rounds: 20 });
             cmds.push({ command:"MOVE", position: baseIndex });
         }
 
-        // upgrade-ek maxra
         for (let i=0;i<5;i++) cmds.push({ command:"UPGRADE", attribute:"mining_speed" });
         for (let i=0;i<5;i++) cmds.push({ command:"UPGRADE", attribute:"move_speed" });
         for (let i=0;i<5;i++) cmds.push({ command:"UPGRADE", attribute:"capacity" });
 
-        // még bányászat
         cmds.push({ command:"MOVE", position: astIndex });
         cmds.push({ command:"MINE", rounds: 50 });
         cmds.push({ command:"MOVE", position: baseIndex });
@@ -240,15 +228,12 @@ function solveQuestion(q) {
     }
 
     if (type === "SOLVEMAP") {
-        // 6. + 7–20. feladatok – pontszerzés (fejleszt + új hajók vásárlása)
         return solveSolvemap(params);
     }
 
-    // Ismeretlen típus esetén:
     return {};
 }
 
-// ========= FELTURBÓZOTT SOLVEMAP AI =========
 function solveSolvemap(params) {
     const positions = params.positions;
     const shipCountInitial = params.shipCount;
@@ -256,7 +241,6 @@ function solveSolvemap(params) {
 
     const distMat = distanceMatrix(positions);
 
-    // hajó alap statok
     const BASE_MOVE = 10;
     const BASE_CAP = 25;
     const BASE_MINE = 15;
@@ -266,7 +250,6 @@ function solveSolvemap(params) {
     const COST_MINE = 35, STEP_MINE = 8;
     const MAX_UP = 5;
 
-    // összes bázis
     const baseIndexes = positions
         .map((p,i)=>p.type==="Base" ? i : -1)
         .filter(i=>i!==-1);
@@ -276,7 +259,6 @@ function solveSolvemap(params) {
         return { commands: cmdsEmpty, newShips: [] };
     }
 
-    // aszteroidák + maradék mennyiség
     const asteroids = positions
         .map((p,i)=>p.type==="Asteroid" ? {idx:i, quantity:p.quantity} : null)
         .filter(x=>x);
@@ -295,7 +277,6 @@ function solveSolvemap(params) {
         totalOre += a.quantity;
     }
 
-    // aszteroidák hozzárendelése legközelebbi bázishoz
     const assignedBase = {};
     for (const a of asteroids) {
         let bestB = baseIndexes[0];
@@ -307,39 +288,14 @@ function solveSolvemap(params) {
         assignedBase[a.idx] = bestB;
     }
 
-    // pályaméret alapú stratégia
-    const SMALL_ORE = 400;
-    const MEDIUM_ORE = 1200;
+    let maxShips;
+    if (totalOre < 600)       maxShips = 3;
+    else if (totalOre < 1200) maxShips = 5;
+    else if (totalOre < 2000) maxShips = 7;
+    else                      maxShips = 9;
 
-    const shortGame  = roundLimit <= 200;
-    const midGame    = roundLimit > 200 && roundLimit <= 400;
-    const bigGame    = roundLimit  > 400;
+    const SAFE_LIMIT = Math.floor(roundLimit * 0.98);
 
-    let enableUpgrades = true;
-    let enableNewShips = true;
-
-    if (totalOre <= SMALL_ORE || shortGame) {
-        enableUpgrades = false;
-        enableNewShips = false;
-    } else if (totalOre <= MEDIUM_ORE || midGame) {
-        enableUpgrades = true;
-        enableNewShips = true;
-    } else {
-        enableUpgrades = true;
-        enableNewShips = true;
-    }
-
-    const maxMiningUp = enableUpgrades ? (totalOre > MEDIUM_ORE ? 5 : 3) : 0;
-    const maxMoveUp   = enableUpgrades ? (totalOre > MEDIUM_ORE ? 4 : 2) : 0;
-    const maxCapUp    = enableUpgrades ? (totalOre > MEDIUM_ORE ? 4 : 2) : 0;
-
-    const NEW_SHIP_TIME_LIMIT =
-        !enableNewShips ? 0 :
-        (totalOre > MEDIUM_ORE ? 0.6 : 0.4);  // későn már ne vegyünk új hajót
-
-    const MAX_SHIPS = 12; // ésszerű plafon
-
-    // hajók + parancsok
     const ships = [];
     const commandsPerShip = [];
 
@@ -363,66 +319,57 @@ function solveSolvemap(params) {
     }
 
     const stock = { value: 0 };
-    const newShipsTurns = []; // hajóvásárlási körök
-
-    const SAFE_LIMIT = Math.floor(roundLimit * 0.95);
-
-    // ========= Folyamatos upgrade logika – dinamikus korlátokkal =========
+    const newShipsTurns = [];
     function tryAutoUpgrades(ship, cmds, stock) {
-        if (!enableUpgrades) return;
-        if (ship.t > roundLimit * 0.7) return;
+        if (ship.t >= roundLimit * 0.45) return;
 
         let changed = true;
         while (changed) {
             changed = false;
+            const t = ship.t;
 
-            // 1) mining_speed – ez hozza a legtöbb ércet
-            if (ship.up.mine < maxMiningUp &&
-                stock.value >= COST_MINE &&
-                ship.t < roundLimit * 0.6) {
+            if (t < roundLimit*0.25 &&
+                ship.up.mine < MAX_UP &&
+                stock.value >= COST_MINE) {
                 cmds.push({ command:"UPGRADE", attribute:"mining_speed" });
                 stock.value -= COST_MINE;
                 ship.mine += STEP_MINE;
                 ship.up.mine++;
-                ship.t++; // 1 kör upgrade
+                ship.t += 1;
                 changed = true;
                 continue;
             }
 
-            // 2) capacity
-            if (ship.up.cap < maxCapUp &&
-                stock.value >= COST_CAP &&
-                ship.t < roundLimit * 0.5) {
+            if (t < roundLimit*0.35 &&
+                ship.up.cap < MAX_UP &&
+                stock.value >= COST_CAP) {
                 cmds.push({ command:"UPGRADE", attribute:"capacity" });
                 stock.value -= COST_CAP;
                 ship.cap += STEP_CAP;
                 ship.up.cap++;
-                ship.t++;
+                ship.t += 1;
                 changed = true;
                 continue;
             }
 
-            // 3) move_speed
-            if (ship.up.move < maxMoveUp &&
-                stock.value >= COST_MOVE &&
-                ship.t < roundLimit * 0.5) {
+            if (t < roundLimit*0.45 &&
+                ship.up.move < MAX_UP &&
+                stock.value >= COST_MOVE) {
                 cmds.push({ command:"UPGRADE", attribute:"move_speed" });
                 stock.value -= COST_MOVE;
                 ship.move += STEP_MOVE;
                 ship.up.move++;
-                ship.t++;
+                ship.t += 1;
                 changed = true;
                 continue;
             }
         }
     }
 
-    // ========= Új hajók vásárlása – óvatosan =========
     function tryBuyNewShips(stock, newShipsTurns, currentRound, ships, commandsPerShip) {
-        if (!enableNewShips) return;
-        if (currentRound >= roundLimit * NEW_SHIP_TIME_LIMIT) return;
+        if (currentRound >= roundLimit * 0.40) return;
 
-        while (stock.value >= 300 && ships.length < MAX_SHIPS) {
+        while (stock.value >= 300 && ships.length < maxShips) {
             stock.value -= 300;
             newShipsTurns.push(currentRound);
 
@@ -436,7 +383,7 @@ function solveSolvemap(params) {
                 cap: BASE_CAP,
                 mine: BASE_MINE,
                 cargo: 0,
-                t: currentRound + 1, // 1 kör építés után indul
+                t: currentRound + 1,
                 up: { move:0, cap:0, mine:0 },
                 active: true
             };
@@ -448,7 +395,6 @@ function solveSolvemap(params) {
         }
     }
 
-    // ========= Aszteroida választás – érc / kör hatékonyság alapján =========
     function bestAstForShip(ship) {
         let bestIdx = null;
         let bestScore = 0;
@@ -459,19 +405,26 @@ function solveSolvemap(params) {
             if (rem <= 0) continue;
 
             const base = assignedBase[idx];
-            if (base !== ship.baseIndex) continue;
 
-            const distOut = distMat[ship.baseIndex][idx];
-            const distBack = distMat[idx][base];
-            const travelDist = distOut + distBack;
+            const targetBase = base;
+            if (ship.baseIndex !== targetBase) {
+                if (ship.t > roundLimit * 0.7) continue;
+            }
 
-            const moveRounds = Math.ceil(travelDist / ship.move) || 1;
+            const distOut = distMat[ship.pos][idx];
+            const distBack = distMat[idx][targetBase];
 
-            const maxMinedThisTrip = Math.min(ship.cap, rem);
-            const mineRounds = Math.ceil(maxMinedThisTrip / ship.mine) || 1;
+            const travelOutRounds = Math.ceil(distOut / ship.move);
+            const travelBackRounds = Math.ceil(distBack / ship.move);
 
-            const totalTripRounds = moveRounds + mineRounds;
-            const efficiency = maxMinedThisTrip / totalTripRounds;
+            const minedPerTrip = Math.min(rem, ship.cap);
+            const mineRounds = Math.ceil(minedPerTrip / ship.mine) || 1;
+
+            const totalTripTime = travelOutRounds + mineRounds + travelBackRounds;
+
+            if (ship.t + totalTripTime > SAFE_LIMIT) continue;
+
+            const efficiency = minedPerTrip / totalTripTime;
 
             if (efficiency > bestScore) {
                 bestScore = efficiency;
@@ -481,10 +434,9 @@ function solveSolvemap(params) {
         return bestIdx;
     }
 
-    // ========= Trip szimuláció: base -> asteroid -> mine -> base =========
     function simulateTrip(ship, astIndex, cmds) {
-        const base = assignedBase[astIndex];
-        ship.baseIndex = base;
+        const targetBase = assignedBase[astIndex];
+        ship.baseIndex = targetBase;
 
         if (ship.pos !== astIndex) {
             const d1 = distMat[ship.pos][astIndex];
@@ -495,6 +447,8 @@ function solveSolvemap(params) {
                 ship.pos = astIndex;
             }
         }
+
+        if (ship.t > SAFE_LIMIT) return;
 
         let free = ship.cap - ship.cargo;
         let avail = remaining[astIndex];
@@ -510,21 +464,28 @@ function solveSolvemap(params) {
             remaining[astIndex] -= mined;
         }
 
-        if (ship.pos !== base) {
-            const d2 = distMat[ship.pos][base];
+        if (ship.t > SAFE_LIMIT) return;
+
+        if (ship.pos !== targetBase) {
+            const d2 = distMat[ship.pos][targetBase];
             const r2 = Math.ceil(d2 / ship.move);
             if (r2 > 0) {
                 ship.t += r2;
-                cmds.push({ command:"MOVE", position: base });
-                ship.pos = base;
+                cmds.push({ command:"MOVE", position: targetBase });
+                ship.pos = targetBase;
             }
         }
 
+        if (ship.t > SAFE_LIMIT) return;
+
         stock.value += ship.cargo;
         ship.cargo = 0;
+
+        tryAutoUpgrades(ship, cmds, stock);
+        const currentRound = Math.floor(ship.t);
+        tryBuyNewShips(stock, newShipsTurns, currentRound, ships, commandsPerShip);
     }
 
-    // ========= Fő bányász ciklus =========
     function remainingOreExists() {
         for (const a of asteroids) {
             if (remaining[a.idx] > 0) return true;
@@ -560,10 +521,6 @@ function solveSolvemap(params) {
         }
 
         simulateTrip(ship, aIdx, cmds);
-        tryAutoUpgrades(ship, cmds, stock);
-
-        const currentRound = Math.floor(ship.t);
-        tryBuyNewShips(stock, newShipsTurns, currentRound, ships, commandsPerShip);
 
         if (ship.t >= SAFE_LIMIT) {
             ship.active = false;
@@ -576,7 +533,6 @@ function solveSolvemap(params) {
     };
 }
 
-// ========= Megoldás generálása az aktuális feladatra =========
 function generateAnswers() {
     if (!originalData) {
         alert("Előbb kérd le a feladatot!");
@@ -587,7 +543,7 @@ function generateAnswers() {
     const answers = questions.map(q => {
         const solved = solveQuestion(q);
         return {
-            id: q.ID,   // kérdés ID-je
+            id: q.ID,
             answer: solved
         };
     });
@@ -598,7 +554,6 @@ function generateAnswers() {
         JSON.stringify(answers, null, 2);
 }
 
-// ========= Megoldás beküldése =========
 async function submitAnswers() {
     if (!originalData || !originalHash) {
         alert("Nincs lekért feladat!");
@@ -612,11 +567,11 @@ async function submitAnswers() {
     const teamcode = document.getElementById("teamcode").value.trim();
 
     const payload = {
-        id: originalData.ID,          // fontos: a feladat ID-je (pl. 7)
+        id: originalData.ID,
         teamcode: teamcode,
-        original_data: originalData,  // teljes data
-        original_hash: originalHash,  // gettasks hash
-        answer_data: generatedAnswers // [{ id: questionID, answer: {...} }]
+        original_data: originalData,
+        original_hash: originalHash,
+        answer_data: generatedAnswers
     };
 
     document.getElementById("requestPre").textContent =
@@ -639,8 +594,6 @@ async function submitAnswers() {
     }
 }
 
-/* ========= SZIMULÁCIÓS UI – CANVAS, DIZÁJNOLT OBJEKTUMOK ========= */
-
 let simState = null;
 let simRunning = false;
 let simLastTs = null;
@@ -651,7 +604,6 @@ const shipColors = [
     "#00ff88", "#8888ff", "#ff8888", "#88ff88"
 ];
 
-// Űrállomás (Base) – hexagon + glow
 function drawBase(ctx, x, y) {
     ctx.save();
     ctx.translate(x, y);
@@ -671,7 +623,6 @@ function drawBase(ctx, x, y) {
     ctx.closePath();
     ctx.stroke();
 
-    // középső mag
     ctx.fillStyle = "#003333";
     ctx.beginPath();
     ctx.arc(0, 0, 4, 0, Math.PI*2);
@@ -680,13 +631,11 @@ function drawBase(ctx, x, y) {
     ctx.restore();
 }
 
-// Aszteroida – kráteres kő
 function drawAsteroid(ctx, x, y, seed) {
     ctx.save();
     ctx.translate(x, y);
 
     const rand = (n) => {
-        // determinisztikus "random" az indexhez
         const x = Math.sin(n*999) * 10000;
         return x - Math.floor(x);
     };
@@ -706,7 +655,6 @@ function drawAsteroid(ctx, x, y, seed) {
     ctx.closePath();
     ctx.fill();
 
-    // kráterek
     ctx.fillStyle = "#3b261a";
     for (let i = 0; i < 3; i++) {
         let cx = (rand(seed*7 + i)*10) - 5;
@@ -719,7 +667,6 @@ function drawAsteroid(ctx, x, y, seed) {
     ctx.restore();
 }
 
-// Hajó – irányba forduló rakéta faroklánggal
 function drawShip(ctx, ship) {
     ctx.save();
     ctx.translate(ship.x, ship.y);
@@ -730,21 +677,18 @@ function drawShip(ctx, ship) {
     }
     ctx.rotate(angle);
 
-    // test
     ctx.fillStyle = ship.color;
     ctx.beginPath();
-    ctx.moveTo(12, 0);       // orr
+    ctx.moveTo(12, 0);
     ctx.lineTo(-8, -6);
     ctx.lineTo(-8, 6);
     ctx.closePath();
     ctx.fill();
 
-    // körvonal
     ctx.strokeStyle = "#000";
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // farokláng
     ctx.fillStyle = "orange";
     ctx.beginPath();
     ctx.moveTo(-8, -3);
@@ -761,7 +705,6 @@ function buildSimulation(positions, solvemapAnswer) {
     const canvas = document.getElementById("simCanvas");
     const ctx = canvas.getContext("2d");
 
-    // koordináta skálázás
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     positions.forEach(p => {
         if (p.x < minX) minX = p.x;
@@ -802,7 +745,7 @@ function buildSimulation(positions, solvemapAnswer) {
                 const sp2 = toScreen(p2);
                 const from = { x: currentPos.x, y: currentPos.y };
                 const to   = { x: sp2.x, y: sp2.y };
-                const duration = 800; // vizuális idő (ms)
+                const duration = 800;
                 segments.push({ type:"move", from, to, duration });
                 currentPos = to;
             } else if (cmd.command === "MINE" && currentPos) {
@@ -847,7 +790,6 @@ function drawSimulationFrame(state) {
 
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    // háttér – kis "csillagok"
     ctx.fillStyle = "#000015";
     ctx.fillRect(0,0,canvas.width,canvas.height);
     ctx.fillStyle = "#444";
@@ -857,7 +799,6 @@ function drawSimulationFrame(state) {
         ctx.fillRect(x, y, 1, 1);
     }
 
-    // bázisok és aszteroidák
     positions.forEach((p, idx) => {
         const sp = toScreen(p);
         if (p.type === "Base") {
@@ -867,7 +808,6 @@ function drawSimulationFrame(state) {
         }
     });
 
-    // hajók
     ships.forEach(ship => {
         drawShip(ctx, ship);
     });
@@ -919,7 +859,6 @@ function updateSimulation(state, dt) {
             }
         }
 
-        // mozgásvektor a rakéta irányához
         ship.vx = ship.x - ship.lastX;
         ship.vy = ship.y - ship.lastY;
         ship.lastX = ship.x;
