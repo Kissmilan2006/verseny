@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>Feladatok lekérése</title>
+</head>
+<body>
+    <h1>1-es feladat lekérése</h1>
+    <pre id="output">Betöltés...</pre>
+
+    <script>
+        const TEAMCODE = "a844b7d39462bf1f46d6";
+
+        let originalDataFromServer = null;
+        let originalHashFromServer = null;
+
+        // --- 1) Feladat lekérése ---
+        async function getTask(id) {
+            try {
+                const response = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/gettasks.php", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        id: id,
+                        teamcode: TEAMCODE
+                    })
+                });
+
+                const data = await response.json();
+                console.log("Feladat adatai:", data);
+
+                if (data.status !== "success") {
+                    document.getElementById("output").textContent =
+                        "Hiba történt: " + data.message;
+                    return;
+                }
+
+                originalDataFromServer = data.data;
+                originalHashFromServer = data.hash;
+
+                document.getElementById("output").textContent =
+                    JSON.stringify(data.data, null, 4);
+
+            } catch (error) {
+                console.error("Hálózati hiba:", error);
+                document.getElementById("output").textContent = "Hiba történt!";
+            }
+        }
+
+        getTask(2); // <-- 1-es feladat lekérése
+
+
+        // --- 2) Válasz beküldése ---
+        async function sendAnswer() {
+
+            // --- SZÁMÍTÁS ---
+            const q1 = originalDataFromServer.questions[0].params;
+            const q2 = originalDataFromServer.questions[1].params;
+
+            const answer1 = q1.number1 + q1.number2;
+            const answer2 = q2.number1 + q2.number2;
+
+            console.log("Számolt válaszok:", answer1, answer2);
+
+            const response = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/answer.php", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    id: originalDataFromServer.ID,
+                    teamcode: TEAMCODE,
+                    original_data: originalDataFromServer,
+                    original_hash: originalHashFromServer,
+                    answer_data: [
+                        { id: "1", answer: answer1 },
+                        { id: "2", answer: answer2 }
+                    ]
+                })
+            });
+
+            const result = await response.json();
+            console.log("Beküldés eredménye:", result);
+        }
+
+
+
+    </script>
+</body>
+</html>
