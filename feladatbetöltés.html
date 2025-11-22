@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    
+<button onclick="loadTask1()">1. feladat lekérése</button>
+<div id="taskdata"></div>
+
+    <script>
+    function loadAllTasks() {
+
+    const csapatkod = "a844b7d39462bf1f46d6";
+
+    fetch("https://bitkozpont.mik.uni-pannon.hu/2025/gettasks.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            id: "all",
+            teamcode: csapatkod
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        console.log("Feladatlista:", data);
+    });
+}
+
+function loadTask1() {
+
+    const csapatkod = "a844b7d39462bf1f46d6";
+
+    fetch("https://bitkozpont.mik.uni-pannon.hu/2025/gettasks.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            id:3,               // 🔥 KONKRÉT FELADAT ID = 1
+            teamcode: csapatkod
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        console.log("1. feladat adatai:", data);
+
+        document.getElementById("taskdata").innerHTML =
+            "<pre>" + JSON.stringify(data, null, 2) + "</pre>";
+    });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitfaragó – DISTMATRIX megoldás</title>
+</head>
+
+<body>
+
+    <button onclick="loadTask()">Feladat 2 lekérése és beküldése</button>
+    <pre id="log"></pre>
+
+    <script>
+        const csapatkod = "a844b7d39462bf1f46d6";  // ← SAJÁT KÓD
+
+        function log(msg) {
+            document.getElementById("log").innerText += msg + "\n";
+        }
+
+        // ------------------------------------------
+        // DISTMATRIX számítása
+        // ------------------------------------------
+        function distanceMatrix(positions) {
+            const n = positions.length;
+            const matrix = [];
+
+            for (let i = 0; i < n; i++) {
+                const row = [];
+                for (let j = 0; j < n; j++) {
+                    if (i === j) row.push(0);
+                    else {
+                        const dx = positions[i].x - positions[j].x;
+                        const dy = positions[i].y - positions[j].y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        row.push(Math.ceil(dist));
+                    }
+                }
+                matrix.push(row);
+            }
+            return matrix;
+        }
+
+        // ------------------------------------------
+        // FELADAT LEKÉRÉSE + MEGOLDÁSA + BEKÜLDÉSE
+        // ------------------------------------------
+        async function loadTask() {
+            log("Feladat lekérése...");
+
+            // 1️⃣ Feladat lekérése
+            const resp = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/gettasks.php", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    id: 4,              // ← ez a konkrét feladat
+                    teamcode: csapatkod
+                })
+            });
+
+            const task = await resp.json();
+            console.log(task);
+            log("Feladat lekérve.");
+
+            const originalData = task.data;
+            const originalHash = task.hash;
+
+            const answers = [];
+
+            // 2️⃣ Végigmegyünk minden kérdésen
+            for (const q of originalData.questions) {
+
+                if (q.params.type === "DISTMATRIX") {
+                    const matrix = distanceMatrix(q.params.positions);
+
+                    log(`Mátrix elkészült a(z) ${q.ID} kérdéshez (méret: ${matrix.length}x${matrix.length})`);
+
+                    answers.push({
+                        id: q.ID,
+                        answer: matrix
+                    });
+                }
+            }
+
+            log("Minden válasz elkészült, küldöm a szervernek...");
+
+            // 3️⃣ Beküldés
+            const submit = await fetch("https://bitkozpont.mik.uni-pannon.hu/2025/answer.php", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    id: originalData.ID,       // feladat ID-je
+                    teamcode: csapatkod,
+                    original_data: originalData,
+                    original_hash: originalHash,
+                    answer_data: answers
+                })
+            });
+
+            const result = await submit.json();
+            console.log(result);
+            log("Beküldés válasza:");
+            log(JSON.stringify(result, null, 2));
+        }
+
+    </script>
+
+</body>
+</html>
